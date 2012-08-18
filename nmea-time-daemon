@@ -1,0 +1,205 @@
+#! /usr/bin/perl
+
+#
+# This is nmea-time-daemon
+# Created by Martin Oldfield, nmea-time-daemon@mjo.tc
+# Created on 2012-08-17
+#
+
+use strict;
+use warnings;
+
+use Device::SerialPort;
+use Date::Manip;
+use Getopt::Long;
+
+my %Opt = ( delay => 1,
+	    time  => 'now', 
+	    where => '5220.531,N,00011.797,E',
+	    loop  => 1,
+	    port  => '/dev/ttyAMA0',
+	    baudrate => 4800,
+	    parity   => 'none',
+	    stopbits => 1,
+	  );
+
+GetOptions(\%Opt, 
+	   "delay=i", "port=s", "verbose!", "time=s", "loop!",
+	   "baudrate=i", "parity=s", "stopbits=i", );
+
+my $port = Device::SerialPort->new($Opt{port})
+  or die "Unable to open $Opt{port}, ";
+
+$port->baudrate($Opt{baudrate});
+$port->parity(  $Opt{parity});
+$port->stopbits($Opt{stopbits});
+
+#
+# http://www.gpsinformation.org/dale/nmea.htm says:
+#
+# Each sentence begins with a '$' and ends with a carriage return/line
+# feed sequence and can be no longer than 80 characters of visible text
+# (plus the line terminators). The data is contained within this single
+# line with data items separated by commas. The data itself is just
+# ascii text and may extend over multiple sentences in certain
+# specialized instances but is normally fully contained in one variable
+# length sentence. The data may vary in the amount of precision
+# contained in the message. For example time might be indicated to
+# decimal parts of a second or location may be show with 3 or even 4
+# digits after the decimal point. Programs that read the data should
+# only use the commas to determine the field boundaries and not depend
+# on column positions. There is a provision for a checksum at the end of
+# each sentence which may or may not be checked by the unit that reads
+# the data. The checksum field consists of a '*' and two hex digits
+# representing an 8 bit exclusive OR of all characters between, but not
+# including, the '$' and '*'. A checksum is required on some sentences.
+#
+# ...
+# 
+# RMC - NMEA has its own version of essential gps pvt (position,
+# velocity, time) data. It is called RMC, The Recommended Minimum,
+# which will look similar to:
+# 
+# $GPRMC,123519,A,4807.038,N,01131.000,E,022.4,084.4,230394,003.1,W*6A
+# 
+# Where:
+#      RMC          Recommended Minimum sentence C
+#      123519       Fix taken at 12:35:19 UTC
+#      A            Status A=active or V=Void.
+#      4807.038,N   Latitude 48 deg 07.038' N
+#      01131.000,E  Longitude 11 deg 31.000' E
+#      022.4        Speed over the ground in knots
+#      084.4        Track angle in degrees True
+#      230394       Date - 23rd of March 1994
+#      003.1,W      Magnetic Variation
+#      *6A          The checksum data, always begins with *
+
+# Note that, as of the 2.3 release of NMEA, there is a new field in
+# the RMC sentence at the end just prior to the checksum. For more
+# information on this field see here.
+
+do
+  {
+    send_msg($port, UnixDate($Opt{time}, 
+		    "GPRMC,%H%M%S.000,A,$Opt{where},0.0,0.0,%d%m%y,,A"));
+    sleep $Opt{delay};
+  } while ($Opt{loop});
+
+sub send_msg
+  {
+    my ($port, $str) = @_;
+
+    my $csum = checksum($str);
+    my $msg  = '$' . $str . '*' . $csum;
+
+    print "$msg\n" if $Opt{verbose};
+    $port->write("$msg\r\n");
+  }
+
+sub checksum
+  {
+    my $str = shift;
+    
+    my $csum = 0;
+    foreach my $c (split(//, $str))
+      {
+	$csum ^= ord($c);
+      }
+
+    return sprintf("%02x", $csum);
+  }
+
+__END__
+
+=head1 NAME
+ 
+nmea-time-daemon - Send fake NMEA sentences to a port faking a GPSr
+ 
+=head1 USAGE
+
+    nmea-time-daemon --verbose
+
+    nmea-time-daemon --port=/dev/ttyS1
+
+    nmea-time-daemon --time=23:59:59 --no-loop
+  
+=head1 OPTIONS
+ 
+=over
+
+=item verbose
+
+Send the message to STDOUT too.
+
+=item delay
+
+The delay, in seconds, between messages. It defaults to one second.
+
+=item time
+
+A time specification parsed by C<Date::Manip>. It defaults to `now' but
+you might want to hard code it to e.g. 12:00:00 for testing purposes.
+
+=item where
+
+The fake position coordinates used in the message. It defaults to 
+the location of the Church of St Mary the Great, in Cambridge, UK. 
+The format is lamentably obscure: 5220.531,N,00011.797,E
+
+=item port
+
+The serial port to which the NMEA sentences are sent. Defaults to /dev/ttyAMA0
+which makes sense on the Raspberry Pi.
+
+=item baudrate, partity, stopbits
+
+Sets the serial port parameters, defaulting to 4800, none and 1, respectively.
+
+=back
+ 
+ 
+=head1 DESCRIPTION
+
+A trivially simply program which sends NMEA GPRMC sentences to a 
+serial port. The location is hardcoded, but the time is (usually) the
+normal system time. Since more is often better, the program usually keeps
+doing this forever.
+
+This apparently bizarre behaviour is just the job if your want to
+set the time on a clock which accepts a serial signal from a GPS
+receiver.
+
+=head1 DEPENDENCIES
+
+=over
+
+=item C<Device::SerialPort>
+
+=item C<Date::Manip>
+
+=back
+
+=head1 BUGS AND LIMITATIONS
+
+There are no known bugs in this application.
+
+Please report problems to the author.
+
+Patches are welcome.
+ 
+=head1 AUTHOR
+
+Martin Oldfield, nmea-time-daemon@mjo.tc
+
+=head1 LICENCE AND COPYRIGHT
+ 
+Copyright (c) 2012, Martin Oldfield. All rights reserved.
+ 
+This module is free software; you can redistribute it and/or
+modify it under the same terms as Perl itself. See L<perlartistic>.
+ 
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. 
+
+
